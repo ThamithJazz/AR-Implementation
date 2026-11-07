@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Cyber-Relic AR // Quantum Core</title>
+
+  <!-- 1. A-Frame 1.3.0 & AR.js 3.4.5 -->
+  <script src="https://aframe.io/releases/1.3.0/aframe.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/gh/AR-js-org/AR.js@3.4.5/aframe/build/aframe-ar.js"></script>
+
+  <style>
+    * {
+      box-sizing: border-box;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    body {
+      margin: 0;
+      overflow: hidden;
+      font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+    }
+
+    /* Condition 5: Status Banner (Glassmorphism HUD) */
+    #status-banner {
+      position: fixed;
+      top: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 999;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 20px;
+      border-radius: 999px;
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+      transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+      pointer-events: none;
+    }
+
+    /* Lost / Scanning State */
+    .status-lost {
+      background: rgba(40, 15, 20, 0.85);
+      color: #ff6b81;
+      border: 1px solid rgba(255, 71, 87, 0.5);
+      box-shadow: 0 0 20px rgba(255, 71, 87, 0.3);
+    }
+
+    /* Found / Locked State */
+    .status-found {
+      background: rgba(10, 35, 30, 0.88);
+      color: #00ffcc;
+      border: 1px solid rgba(0, 255, 204, 0.6);
+      box-shadow: 0 0 25px rgba(0, 255, 204, 0.4);
+    }
+
+    .pulse-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+
+    .status-lost .pulse-dot {
+      background: #ff4757;
+      box-shadow: 0 0 10px #ff4757;
+      animation: blink 1.2s infinite ease-in-out;
+    }
+
+    .status-found .pulse-dot {
+      background: #00ffcc;
+      box-shadow: 0 0 12px #00ffcc;
+      animation: pulse 2s infinite ease-in-out;
+    }
+
+    @keyframes blink {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.3; transform: scale(0.8); }
+    }
+
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.3); }
+    }
+
+    /* Interactive Bottom Bar & Marker Helper */
+    #hud-footer {
+      position: fixed;
+      bottom: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 999;
+      display: flex;
+      gap: 12px;
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      background: rgba(10, 15, 25, 0.75);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      padding: 8px 14px;
+      border-radius: 12px;
+      color: #fff;
+      font-size: 12px;
+      align-items: center;
+    }
+
+    #hud-footer button {
+      background: #00d2d3;
+      border: none;
+      color: #011627;
+      font-weight: 700;
+      padding: 6px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 11px;
+      text-transform: uppercase;
+      transition: background 0.2s;
+    }
+
+    #hud-footer button:hover {
+      background: #54a0ff;
+    }
+
+    /* Marker Modal Dialog */
+    #marker-modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.85);
+      z-index: 10000;
+      justify-content: center;
+      align-items: center;
+      flex-direction: column;
+      padding: 20px;
+      text-align: center;
+      color: #fff;
+    }
+
+    #marker-modal img {
+      max-width: 260px;
+      width: 80%;
+      background: #fff;
+      padding: 16px;
+      border-radius: 8px;
+      margin: 16px 0;
+    }
+  </style>
+
+  <script>
+    // --- Synthesized Audio FX (Zero External Dependencies) ---
+    const AudioFX = {
+      ctx: null,
+      init() {
+        if (!this.ctx) {
+          const AudioContext = window.AudioContext || window.webkitAudioContext;
+          if (AudioContext) this.ctx = new AudioContext();
+        }
+      },
+      beep(freq = 440, type = 'sine', duration = 0.12) {
+        try {
+          this.init();
+          if (!this.ctx) return;
+          if (this.ctx.state === 'suspended') this.ctx.resume();
+          const osc = this.ctx.createOscillator();
+          const gain = this.ctx.createGain();
+          osc.type = type;
+          osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
+          gain.gain.setValueAtTime(0.12, this.ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + duration);
+          osc.connect(gain);
+          gain.connect(this.ctx.destination);
+          osc.start();
+          osc.stop(this.ctx.currentTime + duration);
+        } catch (e) {}
+      }
+    };
+
+    // --- Component 1: Workshop Color Changer (for the Energy Orb) ---
+    AFRAME.registerComponent('ball-color-changer', {
+      schema: {
+        colors: {
+          default: ['#ff4757', '#2ed573', '#1e90ff', '#ffa502', '#9b59b6', '#00f2fe']
+        }
+      },
+      init() {
+        this.colorIndex = 0;
+        this.el.addEventListener('click', (evt) => {
+          evt.stopPropagation();
+          this.colorIndex = (this.colorIndex + 1) % this.data.colors.length;
+          const nextColor = this.data.colors[this.colorIndex];
+          this.el.setAttribute('material', 'color', nextColor);
+
+          // Audio & Haptic feedback
+          AudioFX.beep(600 + this.colorIndex * 80, 'sine', 0.1);
+          if (navigator.vibrate) navigator.vibrate(40);
+
+          // Real-time HUD update
+          const hudLabel = document.querySelector('#hud-label');
+          if (hudLabel) {
+            hudLabel.setAttribute('value', `ORB COLOR: ${nextColor.toUpperCase()}`);
+            hudLabel.setAttribute('color', nextColor);
+          }
+        });
+      }
+    });
+
+    // --- Component 2: Custom Component (Quantum Reactor Core) ---
+    // Condition 4: New tappable object that grows and toggles visibility
+    AFRAME.registerComponent('quantum-reactor', {
+      schema: {
+        targetShield: { type: 'selector', default: '#shield-ring' },
+        hudText: { type: 'selector', default: '#hud-label' }
+      },
+      init() {
+        this.isOverdrive = false;
+        this.baseScale = { x: 0.35, y: 0.35, z: 0.35 };
+        this.overdriveScale = { x: 0.55, y: 0.55, z: 0.55 };
+
+        this.el.addEventListener('click', (evt) => {
+          evt.stopPropagation();
+          this.isOverdrive = !this.isOverdrive;
+
+          // 1. Elastic growth / pulse
+          const targetScale = this.isOverdrive ? this.overdriveScale : this.baseScale;
+          this.el.setAttribute('animation__scale', {
+            property: 'scale',
+            to: `${targetScale.x} ${targetScale.y} ${targetScale.z}`,
+            dur: 350,
+            easing: 'easeOutElastic'
+          });
+
+          // 2. Toggle shield ring visibility
+          if (this.data.targetShield) {
+            const currentVis = this.data.targetShield.getAttribute('visible');
+            this.data.targetShield.setAttribute('visible', !currentVis);
+          }
+
+          // 3. Shift core material color
+          this.el.setAttribute('material', 'color', this.isOverdrive ? '#ff007f' : '#ff9f43');
+
+          // 4. Update HUD readout
+          if (this.data.hudText) {
+            const statusMsg = this.isOverdrive
+              ? 'REACTOR OVERDRIVE: ACTIVE\n[SHIELD ENGAGED]'
+              : 'REACTOR NORMAL: STABLE\n[SHIELD DISENGAGED]';
+            this.data.hudText.setAttribute('value', statusMsg);
+            this.data.hudText.setAttribute('color', this.isOverdrive ? '#ff007f' : '#ff9f43');
+          }
+
+          // Audio & Haptics
+          AudioFX.beep(this.isOverdrive ? 880 : 330, 'triangle', 0.2);
+          if (navigator.vibrate) navigator.vibrate([40, 30, 60]);
+        });
+      }
+    });
+
+    // --- Component 3: Marker Event Tracker (Status Banner Controller) ---
+    // Condition 5: Changes banner color and text on markerFound / markerLost
+    AFRAME.registerComponent('marker-state-tracker', {
+      init() {
+        const banner = document.querySelector('#status-banner');
+        const bannerText = document.querySelector('#banner-text');
+
+        this.el.addEventListener('markerFound', () => {
+          if (banner) {
+            banner.className = 'status-found';
+            if (bannerText) bannerText.innerText = 'Quantum Relic Locked • System Online';
+          }
+          AudioFX.beep(523.25, 'sine', 0.08);
+        });
+
+        this.el.addEventListener('markerLost', () => {
+          if (banner) {
+            banner.className = 'status-lost';
+            if (bannerText) bannerText.innerText = 'Scanning: Point Camera at Hiro Marker';
+          }
+          AudioFX.beep(220, 'sine', 0.15);
+        });
+      }
+    });
+  </script>
+</head>
+
+<body>
+  <!-- Condition 5: Status Banner -->
+  <div id="status-banner" class="status-lost">
+    <span class="pulse-dot"></span>
+    <span id="banner-text">Scanning: Point Camera at Hiro Marker</span>
+  </div>
+
+  <!-- Interactive Bottom Bar -->
+  <div id="hud-footer">
+    <span>💡 Tap Orb to cycle colors | Tap Cube to toggle reactor</span>
+    <button onclick="document.querySelector('#marker-modal').style.display='flex'">Show Marker</button>
+  </div>
+
+  <!-- Modal Dialog to display Hiro Marker for Single-Screen Testing -->
+  <div id="marker-modal" onclick="this.style.display='none'">
+    <h3 style="margin-top:0">Hiro Tracking Marker</h3>
+    <p style="font-size: 13px; max-width: 320px; color: #ccc;">
+      Display this marker on a second device or print it. Tap anywhere to close.
+    </p>
+    <img src="hiro.png" alt="Hiro Marker">
+    <p style="font-size: 11px; color: #888;">(Click anywhere to dismiss)</p>
+  </div>
+
+  <!-- A-Frame Scene -->
+  <a-scene
+    embedded
+    vr-mode-ui="enabled: false"
+    renderer="antialias: true; alpha: true; precision: medium"
+    arjs="sourceType: webcam; debugUIEnabled: false; detectionMode: mono_and_matrix; matrixCodeType: 3x3;">
+
+    <!-- Assets -->
+    <a-assets>
+      <!-- Condition 3: GLB 3D Model (Battle Damaged Sci-Fi Helmet, CC BY-NC 4.0) -->
+      <a-asset-item id="cyber-helmet" src="https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/DamagedHelmet/glTF-Binary/DamagedHelmet.glb"></a-asset-item>
+    </a-assets>
+
+    <!-- Hiro Marker -->
+    <a-marker preset="hiro" marker-state-tracker id="hiro-marker" emitevents="true">
+
+      <!-- OBJECT 1 (Primitive: Cylinder): Holographic Pedestal -->
+      <a-cylinder
+        position="0 0.05 0"
+        radius="0.9"
+        height="0.08"
+        material="color: #0b192c; roughness: 0.3; metalness: 0.85; opacity: 0.95">
+      </a-cylinder>
+
+      <!-- Pedestal Neon Edge Indicator -->
+      <a-ring
+        position="0 0.095 0"
+        rotation="-90 0 0"
+        radius-inner="0.65"
+        radius-outer="0.75"
+        material="color: #00ffcc; emissive: #00ffcc; emissiveIntensity: 0.5; side: double">
+      </a-ring>
+
+      <!-- OBJECT 2 (3D Model): Damaged Helmet (Condition 2: Rotation Animation) -->
+      <a-entity
+        id="helmet-model"
+        gltf-model="#cyber-helmet"
+        position="0 0.65 0"
+        scale="0.45 0.45 0.45"
+        animation="property: rotation; to: 0 360 0; loop: true; dur: 9000; easing: linear">
+      </a-entity>
+
+      <!-- OBJECT 3 (Primitive: Sphere): Energy Orb (Condition 2: Position Animation & Condition 4: Ball Color Change) -->
+      <a-sphere
+        id="energy-orb"
+        class="clickable"
+        ball-color-changer
+        position="-0.65 0.5 0.3"
+        radius="0.18"
+        material="color: #ff4757; roughness: 0.2; metalness: 0.8; emissive: #ff4757; emissiveIntensity: 0.3"
+        animation="property: position; to: -0.65 0.9 0.3; dir: alternate; loop: true; dur: 1800; easing: easeInOutSine">
+      </a-sphere>
+
+      <!-- OBJECT 4 (Primitive: Box): Quantum Reactor (Condition 4: Custom Component) -->
+      <a-box
+        id="quantum-cube"
+        class="clickable"
+        quantum-reactor="targetShield: #shield-ring; hudText: #hud-label"
+        position="0.65 0.45 0.3"
+        scale="0.35 0.35 0.35"
+        material="color: #ff9f43; roughness: 0.3; metalness: 0.7; emissive: #ff9f43; emissiveIntensity: 0.2"
+        animation="property: rotation; to: 360 360 0; loop: true; dur: 6000; easing: linear">
+      </a-box>
+
+      <!-- OBJECT 5 (Primitive: Torus): Holographic Shield Ring (Toggled by Quantum Reactor) -->
+      <a-torus
+        id="shield-ring"
+        position="0 0.65 0"
+        radius="0.6"
+        radius-tubular="0.015"
+        material="color: #00ffcc; emissive: #00ffcc; emissiveIntensity: 0.7; opacity: 0.85; transparent: true"
+        visible="true"
+        animation="property: rotation; to: 360 0 360; loop: true; dur: 4500; easing: linear">
+      </a-torus>
+
+      <!-- Condition 1: One <a-text> Label (Dynamic Holographic HUD) -->
+      <a-text
+        id="hud-label"
+        value="CYBER-RELIC #042\n[TAP ORB / CUBE]"
+        position="0 1.25 0"
+        align="center"
+        scale="0.6 0.6 0.6"
+        color="#00ffcc"
+        font="exo2bold"
+        side="double"
+        geometry="primitive: plane; width: 2.2; height: 0.55"
+        material="color: #0b192c; opacity: 0.75; transparent: true">
+      </a-text>
+
+    </a-marker>
+
+    <!-- Camera with mouse / touch raycaster cursor for clicking objects in AR -->
+    <a-entity camera cursor="fuse: false; rayOrigin: mouse" raycaster="objects: .clickable;"></a-entity>
+
+  </a-scene>
+</body>
+</html>
